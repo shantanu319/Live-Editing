@@ -1,54 +1,83 @@
 import os
 import openai
-openai.api_key = "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"
 import nltk
-import re
-import tkinter as tk
-from tkinter.scrolledtext import ScrolledText
 from nltk.corpus import words
+import re
 
-nltk.download("words")
 class SpellChecker:
-
     def __init__(self):
-        self.root = tk.Tk()
-        self.root.geometry("600x500")
+        nltk.download("words", quiet=True)
+        api_key = os.getenv('OPENAI_API_KEY')
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY environment variable is not set")
+        self.client = openai.OpenAI(api_key=api_key)
+        self.word_set = set(words.words()) 
+    
 
-        self.text = ScrolledText(self.root, font=("Ariel", 12))
-        self.text.bind("<KeyRelease>", self.check)
-        self.text.pack()
-        self.old_spaces = 0
+    def correct_spelling(self, word):
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are a spell checker. Respond only with the corrected word."},
+                    {"role": "user", "content": f"Correct the spelling of: {word}"}
+                ],
+                max_tokens=50,
+                temperature=0.0  # Use deterministic output
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"Error correcting word: {e}")
+            return word
 
-        self.root.mainloop()
+    def check_text(self, text):
+        """Check and correct spelling in the given text."""
+        # Split text into words, preserving spaces and punctuation
+        words_with_positions = []
+        for match in re.finditer(r'\S+', text):
+            words_with_positions.append(
+                (match.group(), match.start(), match.end()))
 
-    def chat_bot(prompt, model = "text-davinci-003"):
-        response = openai.Completion.create(engine=model, prompt=prompt, max_tokens=1024, n=1, stop = None, temperature=0.5,)
-        return response.choices[0].text
+        corrected_text = list(text)
+        corrections_made = []
 
+        for word, start, end in words_with_positions:
 
+            clean_word = re.sub(r'[^\w]', '', word.lower())
 
-    def check(self, event):
-        content = self.text.get("1.0", tk.END)
-        space_count = content.count(" ")
+            # Skip empty strings
+            if len(clean_word) <= 1:
+                continue
 
-        for tag in self.text.tag_names():
-            self.text.tag_delete(tag)
-
-        # isolates individual words
-        if space_count != self.old_spaces:
-            self.old_spaces = space_count
-            # removes special characters
-            for word in content.split(" "):
-                # if word not in word library changes it to the color red
-                if re.sub(r"[^\w]", "", word.lower()) not in words.words():
-                    position = content.find(word)
-                    self.text.tag_add(word, f"1.{position}", f"1.{position + len(word)}")
-                    gptInput = "correct the spelling of " + word + " and return nothing but the corrected word";
-                    newWord = self.chat_bot(gptInput)
-                    #self.text.tag_config(word, foreground="red")
-                    self.text.delete(word, f"1.{position}", f"1.{position + len(word)}")
-                    self.text.insert(f"1.{position}", newWord)
+            # Check if word is misspelled
+            if clean_word not in self.word_set:
+                corrected_word = self.correct_spelling(word)
+                if corrected_word != word:
+                    # Replace the word
+                    corrected_text[start:end] = corrected_word
+                    corrections_made.append((word, corrected_word))
+        return ''.join(corrected_text), corrections_made
 
 
+def main():
+    checker = SpellChecker()
+    print("Welcome to the Spell Checker! (Type 'exit' to quit)")
 
-SpellChecker()
+    while True:
+        text = input("\nEnter text to check: ")
+        if text.lower() == 'exit':
+            break
+
+        corrected_text, corrections = checker.check_text(text)
+
+        if corrections:
+            print("\nCorrected text:", corrected_text)
+            print("\nCorrections made:")
+            for original, corrected in corrections:
+                print(f"  '{original}' → '{corrected}'")
+        else:
+            print("No spelling errors found!")
+
+
+if __name__ == "__main__":
+    main()
